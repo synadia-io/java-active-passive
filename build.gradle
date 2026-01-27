@@ -17,8 +17,8 @@ def isRelease = System.getenv("BUILD_EVENT") == "release"
 def tc = System.getenv("TARGET_COMPATIBILITY")
 def targetJavaVersion = tc == null ? JavaVersion.VERSION_1_8 : JavaVersion.toVersion(tc)
 def targetId = targetJavaVersion.toString()
-def artifact = "active-passive-jdk" + (targetJavaVersion == JavaVersion.VERSION_1_8 ? "" : "-jdk" + targetId)
-def bundleName = "io.synadia.active.passive.jdk" + (targetJavaVersion == JavaVersion.VERSION_1_8 ? "" : ".jdk" + targetId)
+def artifact = "active-passive" + (targetJavaVersion == JavaVersion.VERSION_1_8 ? "" : "-jdk" + targetId)
+def bundleName = "io.synadia.active.passive" + (targetJavaVersion == JavaVersion.VERSION_1_8 ? "" : ".jdk" + targetId)
 
 System.out.println("target compatibility: Java " + targetJavaVersion)
 System.out.println("artifact id         : " + artifact)
