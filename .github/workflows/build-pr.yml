@@ -11,9 +11,6 @@ jobs:
       matrix:
         tc: [ 8, 17, 21, 25 ]
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./core
     env:
       BUILD_EVENT: ${{ github.event_name }}
       TARGET_COMPATIBILITY: ${{ matrix.tc }}
