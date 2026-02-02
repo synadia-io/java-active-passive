@@ -13,7 +13,7 @@ import java.util.logging.Level;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class ApTest {
+public class ApTests {
 
     static {
         NatsRunnerUtils.setDefaultOutputLevel(Level.SEVERE);
