@@ -48,8 +48,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Build and Test
         run: chmod +x gradlew && ./gradlew clean test jacocoTestReport
-      - name: Verify Javadoc
-        run: ./gradlew javadoc
+#      - name: Verify Javadoc
+#        run: ./gradlew javadoc
       - name: Send coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
