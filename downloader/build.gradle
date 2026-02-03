@@ -1,0 +1,25 @@
+plugins {
+    id("java-library")
+}
+
+group = 'io.synadia'
+version = "0.0.0"
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+repositories {
+    mavenCentral()
+    maven { url="https://repo1.maven.org/maven2/" }
+    maven { url="https://central.sonatype.com/repository/maven-snapshots/" }
+}
+
+dependencies {
+    implementation 'io.nats:jnats:2.25.2-SNAPSHOT'
+    implementation 'io.synadia:active-passive:0.0.0-SNAPSHOT'
+    implementation 'io.synadia:active-passive-jdk17:0.0.0-SNAPSHOT'
+    implementation 'io.synadia:active-passive-jdk21:0.0.0-SNAPSHOT'
+    implementation 'io.synadia:active-passive-jdk25:0.0.0-SNAPSHOT'
+}
