@@ -15,10 +15,10 @@ group = 'io.synadia'
 
 def isRelease = System.getenv("BUILD_EVENT") == "release"
 def tc = System.getenv("TARGET_COMPATIBILITY")
-def targetJavaVersion = tc == null ? JavaVersion.VERSION_17 : JavaVersion.toVersion(tc)
+def targetJavaVersion = tc == null ? JavaVersion.VERSION_1_8 : JavaVersion.toVersion(tc)
 def targetId = targetJavaVersion.toString()
-def artifact = "active-passive-jdk" + targetId
-def bundleName = "io.synadia.active.passive.jdk" + targetId
+def artifact = "active-passive" + (targetJavaVersion == JavaVersion.VERSION_1_8 ? "" : "-jdk" + targetId)
+def bundleName = "io.synadia.active.passive" + (targetJavaVersion == JavaVersion.VERSION_1_8 ? "" : ".jdk" + targetId)
 
 System.out.println("target compatibility: Java " + targetJavaVersion)
 System.out.println("artifact id         : " + artifact)
@@ -27,7 +27,7 @@ System.out.println("bundle name         : " + bundleName)
 version = isRelease ? jarVersion : jarVersion + "-SNAPSHOT" // version is the variable that gradle uses.
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = targetJavaVersion
     withSourcesJar()
     withJavadocJar()
@@ -43,7 +43,7 @@ dependencies {
     implementation 'io.nats:jnats:2.25.2-SNAPSHOT'
     implementation 'org.jspecify:jspecify:1.0.0'
 
-    testImplementation 'io.nats:jnats-server-runner-jdk17:3.1.0'
+    testImplementation 'io.nats:jnats-server-runner:3.1.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.7.0'
 
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

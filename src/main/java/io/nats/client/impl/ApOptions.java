@@ -58,6 +58,9 @@ public class ApOptions {
             if (options == null) {
                 options = new Options.Builder().build();
             }
+            if (passiveErrorListener == null) {
+                passiveErrorListener = new ErrorListener() {};
+            }
             return new ApOptions(this);
         }
     }

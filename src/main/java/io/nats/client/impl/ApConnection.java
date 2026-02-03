@@ -18,6 +18,7 @@ public class ApConnection extends NatsConnection {
     final ApOptions apOptions;
     final Options passiveOptions;  // since we may be making passive more than once
     final ApPassiveServerPool apServerPool;
+
     NatsConnection passive;
 
     public static ApConnection connect(ApOptions apOptions) throws IOException, InterruptedException {
@@ -57,10 +58,15 @@ public class ApConnection extends NatsConnection {
     }
 
     private void connect() throws InterruptedException, IOException {
-        super.connect(true);
-        if (!isConnected()) {
-            throw new IOException("Unable to connect to NATS servers");
+        int connectsLeft = serverPool.getServerList().size();
+        while (!isConnected() && connectsLeft-- > 0) {
+            super.connect(true);
         }
+
+        if (!isConnected()) {
+            throw new IOException("Unable to make Active connection to NATS servers");
+        }
+
         apServerPool.setActiveServer(currentServer);
         newPassive();
     }
@@ -70,21 +76,23 @@ public class ApConnection extends NatsConnection {
             passive.close(false, true);
         }
         passive = new NatsConnection(passiveOptions);
-        this.getOptions().getExecutor().execute(() -> {
-            try {
-                passive.connect(true);
-            }
-            catch (InterruptedException | IOException e) {
-                throw new RuntimeException(e);
-            }
-        });
+        try {
+            passive.connect(true);
+        }
+        catch (IOException e) {
+            throw new RuntimeException("Unable to make Passive connection to NATS servers");
+        }
+        if (!passive.isConnected()) {
+            throw new RuntimeException("Unable to make Passive connection to NATS servers");
+        }
     }
 
     @Override
     protected void reconnectImplConnect() throws InterruptedException {
         if (passive == null) {
-            // passive is not available, do the normal reconnect
-            super.reconnectImplConnect();
+            // this can happen on the initial connect, if the bootstrap
+            // servers are unreachable.
+            // Don't do anything, it will fall into the connect's loop
             return;
         }
 

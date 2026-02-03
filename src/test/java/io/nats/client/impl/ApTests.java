@@ -84,10 +84,34 @@ public class ApTests {
     }
 
     @Test
-    public void testNoServer() throws Exception {
-        ApOptions apOptions = getApOptions(4231); // just a server port that won't exist
+    public void testAllBadServers() throws Exception {
+        ApOptions apOptions = getApOptions(4444, 5555); // server ports that won't exist
         //noinspection resource
-        assertThrows(IOException.class, () -> ApConnection.connect(apOptions));
+        IOException ioe = assertThrows(IOException.class, () -> ApConnection.connect(apOptions));
+        assertTrue(ioe.getMessage().contains("Active"));
+    }
+
+    @Test
+    public void testSomeBadServers() throws Exception {
+        try (NatsServerRunner server1 = new NatsServerRunner()) {
+            OptionsHelper helper = getHelper(4444, server1.getPort()); // 1 server ports that won't exist
+
+            helper.activeListener.reset();
+            helper.activeListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
+            helper.activeListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
+
+            helper.passiveListener.reset();
+            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.DISCONNECTED);
+            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.RECONNECTED);
+            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.RESUBSCRIBED);
+            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
+
+            try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                assertEquals(apc.getServerInfo().getServerId(), apc.getPassiveServerInfo().getServerId());
+            }
+            helper.activeListener.validateAll();
+            helper.passiveListener.validateAll();
+        }
     }
 
     @Test
