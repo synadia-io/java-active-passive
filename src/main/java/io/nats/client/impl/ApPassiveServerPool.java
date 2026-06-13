@@ -6,30 +6,67 @@ import io.nats.client.support.NatsUri;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.net.URISyntaxException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ApPassiveServerPool implements ServerPool {
     final ServerPool pool;
     final AtomicReference<NatsUri> activeServerRef;
+    final Map<String, List<String>> resolvedMap;
+    Options.HostnameResolveMode resolveMode;
 
     public ApPassiveServerPool(ServerPool pool) {
         this.pool = pool;
         activeServerRef = new AtomicReference<>();
+        resolvedMap = new HashMap<>();
     }
 
     public void setActiveServer(NatsUri activeNuri) {
         activeServerRef.set(activeNuri);
+        resolve(activeNuri);
+    }
+
+    private void resolve(NatsUri nuri) {
+        if (!nuri.hostIsIpAddress() && !nuri.isWebsocket() && resolveMode.resolve) {
+            String host = nuri.getHost();
+            List<String> resolved = resolvedMap.get(host);
+            if (resolved == null) {
+                resolved = pool.resolveHostToIps(host, resolveMode.maxOneResult, resolveMode.includeIPV6);
+                if (resolved != null && !resolved.isEmpty()) {
+                    resolvedMap.put(host, resolved);
+                }
+            }
+        }
+    }
+
+    private void resolve(@NonNull List<String> serverList) {
+        for (String server : serverList) {
+            try {
+                resolve(new NatsUri(server));
+            }
+            catch (URISyntaxException e) {
+                // ignore, sorry nothing we can do
+            }
+        }
     }
 
     @Override
     public void initialize(@NonNull Options opts) {
+        resolveMode = opts.hostnameResolveMode();
         pool.initialize(opts);
+        resolve(pool.getServerList());
     }
 
     @Override
     public boolean acceptDiscoveredUrls(@NonNull List<@NonNull String> discoveredServers) {
-        return pool.acceptDiscoveredUrls(discoveredServers);
+        boolean accepted = pool.acceptDiscoveredUrls(discoveredServers);
+        if (accepted) {
+            resolve(pool.getServerList());
+        }
+        return accepted;
     }
 
     @Override
@@ -41,7 +78,7 @@ public class ApPassiveServerPool implements ServerPool {
 
         NatsUri firstPeek = pool.peekNextServer();
         NatsUri peek = firstPeek;
-        while (peek != null && peek.equivalent(active)) {
+        while (peek != null && isEquivalent(peek, active)) {
             pool.nextServer(); // advance and peek again
             peek = pool.peekNextServer();
             if (peek == firstPeek) { // if we've looped around, nothing else we can do
@@ -49,6 +86,23 @@ public class ApPassiveServerPool implements ServerPool {
             }
         }
         return peek;
+    }
+
+    private boolean isEquivalent(NatsUri test, NatsUri active) {
+        String activeHost = active.getHost();
+        if (test.getHost().equals(activeHost)) {
+            return true;
+        }
+        if (resolveMode.resolve) {
+            List<String> testResolved = resolvedMap.get(test.getHost());
+            List<String> activeResolved = resolvedMap.get(active.getHost());
+            for (String resolved : testResolved) {
+                if (activeResolved.contains(resolved) || resolved.equals(activeHost)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Override
@@ -59,7 +113,7 @@ public class ApPassiveServerPool implements ServerPool {
         }
         NatsUri firstServer = pool.nextServer();
         NatsUri server = firstServer;
-        while (server != null && server.equivalent(active)) {
+        while (server != null && isEquivalent(server, active)) {
             server = pool.nextServer(); // get the next nextServer
             if (server == firstServer) { // if we've looped around, nothing else we can do
                 break;
