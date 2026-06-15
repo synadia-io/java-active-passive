@@ -95,10 +95,14 @@ public class ApPassiveServerPool implements ServerPool {
         }
         if (resolveMode.resolve) {
             List<String> testResolved = resolvedMap.get(test.getHost());
-            List<String> activeResolved = resolvedMap.get(active.getHost());
-            for (String resolved : testResolved) {
-                if (activeResolved.contains(resolved) || resolved.equals(activeHost)) {
-                    return true;
+            if (testResolved != null) {
+                List<String> activeResolved = resolvedMap.get(active.getHost());
+                if (activeResolved != null) {
+                    for (String resolved : testResolved) {
+                        if (activeResolved.contains(resolved) || resolved.equals(activeHost)) {
+                            return true;
+                        }
+                    }
                 }
             }
         }
