@@ -17,7 +17,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'io.nats:jnats:2.25.2'
+    implementation 'io.nats:jnats:2.25.3'
     implementation 'io.synadia:active-passive:0.0.0-SNAPSHOT'
     implementation 'io.synadia:active-passive-jdk17:0.0.0-SNAPSHOT'
     implementation 'io.synadia:active-passive-jdk21:0.0.0-SNAPSHOT'
