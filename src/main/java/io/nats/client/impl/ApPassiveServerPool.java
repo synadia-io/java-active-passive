@@ -7,6 +7,7 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import java.net.URISyntaxException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,30 +28,6 @@ public class ApPassiveServerPool implements ServerPool {
     public void setActiveServer(NatsUri activeNuri) {
         activeServerRef.set(activeNuri);
         resolve(activeNuri);
-    }
-
-    private void resolve(NatsUri nuri) {
-        if (!nuri.hostIsIpAddress() && !nuri.isWebsocket() && resolveMode.resolve) {
-            String host = nuri.getHost();
-            List<String> resolved = resolvedMap.get(host);
-            if (resolved == null) {
-                resolved = pool.resolveHostToIps(host, resolveMode.maxOneResult, resolveMode.includeIPV6);
-                if (resolved != null && !resolved.isEmpty()) {
-                    resolvedMap.put(host, resolved);
-                }
-            }
-        }
-    }
-
-    private void resolve(@NonNull List<String> serverList) {
-        for (String server : serverList) {
-            try {
-                resolve(new NatsUri(server));
-            }
-            catch (URISyntaxException e) {
-                // ignore, sorry nothing we can do
-            }
-        }
     }
 
     @Override
@@ -89,22 +66,21 @@ public class ApPassiveServerPool implements ServerPool {
     }
 
     private boolean isEquivalent(NatsUri test, NatsUri active) {
+        String testHost = test.getHost();
         String activeHost = active.getHost();
-        if (test.getHost().equals(activeHost)) {
+        if (testHost.equals(activeHost)) {
             return true;
         }
         if (resolveMode.resolve) {
-            List<String> testResolved = resolvedMap.get(test.getHost());
-            if (testResolved != null) {
-                List<String> activeResolved = resolvedMap.get(active.getHost());
-                if (activeResolved != null) {
-                    for (String resolved : testResolved) {
-                        if (activeResolved.contains(resolved) || resolved.equals(activeHost)) {
-                            return true;
-                        }
-                    }
-                }
+            // The NATS server reports discovered servers as IP addresses, while users typically
+            // supply hostnames - so a comparison is always host-vs-IP, never hostname-vs-hostname
+            // by resolution (two distinct hostnames only match by the direct equality check above).
+            if (active.hostIsIpAddress()) {
+                // active is an IP: equivalent only to a test hostname that resolves to that IP.
+                return !test.hostIsIpAddress() && _resolveHostToIps(testHost).contains(activeHost);
             }
+            // active is a hostname: equivalent only to a test IP that is one of its resolved IPs.
+            return test.hostIsIpAddress() && _resolveHostToIps(activeHost).contains(testHost);
         }
         return false;
     }
@@ -128,7 +104,37 @@ public class ApPassiveServerPool implements ServerPool {
 
     @Override
     public @Nullable List<String> resolveHostToIps(@NonNull String host) {
-        return pool.resolveHostToIps(host);
+        return _resolveHostToIps(host);
+    }
+
+    private @NonNull List<String> _resolveHostToIps(@NonNull String host) {
+        List<String> resolved = resolvedMap.get(host);
+        if (resolved == null) {
+            resolved = pool.resolveHostToIps(host, resolveMode.maxOneResult, resolveMode.includeIPV6);
+            if (resolved == null || resolved.isEmpty()) {
+                // placeholder so we don't keep re-resolving a host that resolves to nothing
+                resolved = Collections.emptyList();
+            }
+            resolvedMap.put(host, resolved);
+        }
+        return resolved;
+    }
+
+    private void resolve(NatsUri nuri) {
+        if (!nuri.hostIsIpAddress() && !nuri.isWebsocket() && resolveMode.resolve) {
+            _resolveHostToIps(nuri.getHost());
+        }
+    }
+
+    private void resolve(@NonNull List<String> serverList) {
+        for (String server : serverList) {
+            try {
+                resolve(new NatsUri(server));
+            }
+            catch (URISyntaxException e) {
+                throw new RuntimeException(e); // this should never happen, if it does it's a user error
+            }
+        }
     }
 
     @Override
