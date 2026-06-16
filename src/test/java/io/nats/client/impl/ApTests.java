@@ -102,8 +102,7 @@ public class ApTests {
 
             helper.passiveListener.reset();
             helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.DISCONNECTED);
-            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.RECONNECTED);
-            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.RESUBSCRIBED);
+            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
             helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
 
             try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
@@ -151,21 +150,23 @@ public class ApTests {
             }
 
             try (NatsServerRunner server2 = new NatsServerRunner()) {
-                // make sure passive never is the same as active
-                helper = getHelper(server1, server2);
-                try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
-                    helper.validateConnected();
-                    assertNotEquals(
-                        apc.getServerInfo().getServerId(),
-                        apc.getPassiveServerInfo().getServerId());
+                try (NatsServerRunner server3 = new NatsServerRunner()) {
+                    // make sure passive never is the same as active
+                    helper = getHelper(server1, server2, server3);
+                    try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                        helper.validateConnected();
+                        assertNotEquals(
+                            apc.getServerInfo().getServerId(),
+                            apc.getPassiveServerInfo().getServerId());
 
-                    apc.passiveForceReconnect();
-                    assertNotEquals(
-                        apc.getServerInfo().getServerId(),
-                        apc.getPassiveServerInfo().getServerId());
-                }
-                catch (InterruptedException | IOException e) {
-                    fail();
+                        apc.passiveForceReconnect();
+                        assertNotEquals(
+                            apc.getServerInfo().getServerId(),
+                            apc.getPassiveServerInfo().getServerId());
+                    }
+                    catch (InterruptedException | IOException e) {
+                        fail();
+                    }
                 }
             }
         }
