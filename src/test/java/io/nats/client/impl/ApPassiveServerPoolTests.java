@@ -95,7 +95,7 @@ public class ApPassiveServerPoolTests {
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.resolveMode = Options.HostnameResolveMode.Unresolved;
 
-        sp.setActiveServer(uri("nats://alpha.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://alpha.example.com:4222"));
         fake.peekQueue.add(uri("nats://alpha.example.com:4222")); // same host -> skipped
         fake.peekQueue.add(uri("nats://beta.example.com:4222"));
 
@@ -108,7 +108,7 @@ public class ApPassiveServerPoolTests {
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.resolveMode = Options.HostnameResolveMode.Unresolved;
 
-        sp.setActiveServer(uri("nats://alpha.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://alpha.example.com:4222"));
         fake.peekQueue.add(uri("nats://beta.example.com:4222"));
 
         assertEquals("beta.example.com", sp.peekNextServer().getHost());
@@ -129,7 +129,7 @@ public class ApPassiveServerPoolTests {
         sp.resolvedMap.put("a.example.com", Arrays.asList("10.0.0.1"));
         sp.resolvedMap.put("b.example.com", Arrays.asList("10.0.0.1", "10.0.0.2")); // shares 10.0.0.1
 
-        sp.setActiveServer(uri("nats://a.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://a.example.com:4222"));
         fake.peekQueue.add(uri("nats://b.example.com:4222"));
 
         assertEquals("b.example.com", sp.peekNextServer().getHost()); // not skipped despite shared IP
@@ -144,7 +144,7 @@ public class ApPassiveServerPoolTests {
         sp.resolveMode = Options.HostnameResolveMode.ResolveToAll;
         sp.resolvedMap.put("b.example.com", Arrays.asList("10.0.0.1"));
 
-        sp.setActiveServer(uri("nats://10.0.0.1:4222")); // literal IP, not cached
+        sp.activeConnectSucceeded(uri("nats://10.0.0.1:4222")); // literal IP, not cached
         fake.peekQueue.add(uri("nats://b.example.com:4222")); // resolves to active IP -> skipped
         fake.peekQueue.add(uri("nats://c.example.com:4222")); // distinct -> returned
 
@@ -158,7 +158,7 @@ public class ApPassiveServerPoolTests {
         sp.resolveMode = Options.HostnameResolveMode.ResolveToAll;
         sp.resolvedMap.put("b.example.com", Arrays.asList("10.0.0.9")); // resolves elsewhere
 
-        sp.setActiveServer(uri("nats://10.0.0.1:4222"));
+        sp.activeConnectSucceeded(uri("nats://10.0.0.1:4222"));
         fake.peekQueue.add(uri("nats://b.example.com:4222"));
 
         assertEquals("b.example.com", sp.peekNextServer().getHost()); // not skipped
@@ -173,7 +173,7 @@ public class ApPassiveServerPoolTests {
         sp.resolveMode = Options.HostnameResolveMode.ResolveToAll;
         sp.resolvedMap.put("a.example.com", Arrays.asList("10.0.0.1"));
 
-        sp.setActiveServer(uri("nats://a.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://a.example.com:4222"));
         fake.peekQueue.add(uri("nats://10.0.0.1:4222"));      // active resolves to this IP -> skipped
         fake.peekQueue.add(uri("nats://c.example.com:4222")); // distinct -> returned
 
@@ -191,7 +191,7 @@ public class ApPassiveServerPoolTests {
         sp.resolveMode = Options.HostnameResolveMode.ResolveToAll;
         sp.resolvedMap.put("a.example.com", Arrays.asList("10.0.0.1"));
 
-        sp.setActiveServer(uri("nats://a.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://a.example.com:4222"));
         fake.peekQueue.add(uri("nats://10.0.0.9:4222")); // not one of active's resolved IPs
 
         assertEquals("10.0.0.9", sp.peekNextServer().getHost()); // not skipped
@@ -267,7 +267,7 @@ public class ApPassiveServerPoolTests {
         assertTrue(sp.resolvedMap.get("empty.example.com").isEmpty());
 
         // so a second pass finds the placeholder and does not resolve again
-        sp.setActiveServer(uri("nats://empty.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://empty.example.com:4222"));
         assertEquals(1, Collections.frequency(fake.resolveCalls, "empty.example.com"));
     }
 
@@ -279,7 +279,7 @@ public class ApPassiveServerPoolTests {
 
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.initialize(optionsWith(Options.HostnameResolveMode.ResolveToAll)); // resolves a once
-        sp.setActiveServer(uri("nats://a.example.com:4222"));                 // same host -> cache hit
+        sp.activeConnectSucceeded(uri("nats://a.example.com:4222"));                 // same host -> cache hit
 
         assertEquals(1, Collections.frequency(fake.resolveCalls, "a.example.com"));
     }
@@ -341,7 +341,7 @@ public class ApPassiveServerPoolTests {
         sp.resolveMode = Options.HostnameResolveMode.ResolveToAll;
 
         NatsUri active = uri("nats://a.example.com:4222");
-        sp.setActiveServer(active);
+        sp.activeConnectSucceeded(active);
 
         assertSame(active, sp.activeServerRef.get());
         assertEquals(Arrays.asList("10.0.0.1"), sp.resolvedMap.get("a.example.com"));
@@ -353,7 +353,7 @@ public class ApPassiveServerPoolTests {
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.resolveMode = Options.HostnameResolveMode.ResolveToAll;
 
-        sp.setActiveServer(uri("nats://10.0.0.1:4222"));
+        sp.activeConnectSucceeded(uri("nats://10.0.0.1:4222"));
 
         assertTrue(sp.resolvedMap.isEmpty());
     }
@@ -390,7 +390,7 @@ public class ApPassiveServerPoolTests {
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.resolveMode = Options.HostnameResolveMode.Unresolved;
 
-        sp.setActiveServer(uri("nats://h.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://h.example.com:4222"));
         fake.peekQueue.add(uri("nats://h.example.com:4222")); // equivalent (same host)
         fake.peekQueue.add(uri("nats://h.example.com:6222")); // equivalent (same host, diff port)
         fake.peekQueue.add(uri("nats://other.example.com:4222"));
@@ -404,7 +404,7 @@ public class ApPassiveServerPoolTests {
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.resolveMode = Options.HostnameResolveMode.Unresolved;
 
-        sp.setActiveServer(uri("nats://h.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://h.example.com:4222"));
         NatsUri sameRef = uri("nats://h.example.com:4222"); // only candidate, always equivalent
         fake.peekQueue.add(sameRef);
 
@@ -418,7 +418,7 @@ public class ApPassiveServerPoolTests {
         ApPassiveServerPool sp = new ApPassiveServerPool(fake);
         sp.resolveMode = Options.HostnameResolveMode.Unresolved;
 
-        sp.setActiveServer(uri("nats://h.example.com:4222"));
+        sp.activeConnectSucceeded(uri("nats://h.example.com:4222"));
         NatsUri sameRef = uri("nats://h.example.com:4222");
         fake.peekQueue.add(sameRef);
 

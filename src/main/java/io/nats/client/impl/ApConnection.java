@@ -1,8 +1,6 @@
 package io.nats.client.impl;
 
-import io.nats.client.ForceReconnectOptions;
-import io.nats.client.Options;
-import io.nats.client.ServerPool;
+import io.nats.client.*;
 import io.nats.client.api.ServerInfo;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
@@ -17,9 +15,10 @@ public class ApConnection extends NatsConnection {
 
     final ApOptions apOptions;
     final Options passiveOptions;  // since we may be making passive more than once
-    final ApPassiveServerPool apServerPool;
+    final ApServerPool activeServerPool;
+    final ApServerPool passiveServerPool;
 
-    NatsConnection passive;
+    NatsConnection passiveConnection;
 
     public static ApConnection connect(ApOptions apOptions) throws IOException, InterruptedException {
         if (apOptions == null) {
@@ -30,30 +29,69 @@ public class ApConnection extends NatsConnection {
 
         // this set's up the server pool here instead of waiting for the
         // NatsConnection constructor to do it.
-        ServerPool apServerPool = new ApPassiveServerPool(
-            apOptions.options.getServerPool() == null
-                ? new NatsServerPool()
-                : apOptions.options.getServerPool());
-        activeBuilder.serverPool(apServerPool);
+        ServerPool activeSp = apOptions.activeServerPool;
+        if (activeSp == null) {
+            activeSp = apOptions.options.getServerPool();
+        }
+        if (activeSp == null) {
+            activeSp = new ApPassiveServerPool();
+        }
+        else if (!(activeSp instanceof ApServerPool)) {
+            activeSp = new ApPassiveServerPool(activeSp);
+        }
+        activeBuilder.serverPool(activeSp);
 
-        ApConnection apc = new ApConnection(apOptions, activeBuilder.build());
+        ServerPool passiveSp = apOptions.passiveServerPool;
+        if (passiveSp == null) {
+            passiveSp = activeSp;
+        }
+
+        ApConnection apc = new ApConnection(apOptions, activeBuilder.build(), activeSp, passiveSp);
         apc.connect();
         return apc;
     }
 
-    private ApConnection(ApOptions apOptions, Options activeOptions) {
-        super(activeOptions);
+    /* inner */ class BridgeConnectionListener implements ConnectionListener {
+        final boolean activeListener;
+
+        public BridgeConnectionListener(boolean activeListener) {
+            this.activeListener = activeListener;
+        }
+
+        @Override
+        public void connectionEvent(Connection conn, Events type) {
+            connectionEvent(conn, type, null, null);
+        }
+
+        @Override
+        public void connectionEvent(Connection conn, Events type, Long time, String uriDetails) {
+            if (activeListener) {
+                activeServerPool.activeConnectionEvent(type, time, uriDetails);
+                passiveServerPool.activeConnectionEvent(type, time, uriDetails);
+            }
+            else {
+                activeServerPool.passiveConnectionEvent(type, time, uriDetails);
+                passiveServerPool.passiveConnectionEvent(type, time, uriDetails);
+            }
+        }
+    }
+
+    private ApConnection(ApOptions apOptions, Options options, ServerPool activeSp, ServerPool passiveSp) {
+        super(options);
         this.apOptions = apOptions;
 
-        // we made the pool, so we know this cast is safe
-        apServerPool = (ApPassiveServerPool)activeOptions.getServerPool();
+        // we made the pool or verified, so we know this cast is safe
+        activeServerPool = (ApServerPool)activeSp;
+        passiveServerPool = (ApServerPool)passiveSp;
+
+        addConnectionListener(new BridgeConnectionListener(true));
 
         // get the server pool from the NatsConnection instance
         // it's only ready after [super] construction
-        this.passiveOptions = new Options.Builder(activeOptions)
+        this.passiveOptions = new Options.Builder(options)
             .connectionListener(apOptions.passiveConnectionListener)
             .errorListener(apOptions.passiveErrorListener)
-            .serverPool(apServerPool)
+            .serverPool(passiveServerPool)
             .build();
     }
 
@@ -67,36 +105,41 @@ public class ApConnection extends NatsConnection {
             throw new IOException("Unable to make Active connection to NATS servers");
         }
 
-        apServerPool.setActiveServer(currentServer);
+        activeServerPool.activeConnectSucceeded(currentServer);
+        passiveServerPool.activeConnectSucceeded(currentServer);
+
         newPassive();
     }
 
     private void newPassive() throws InterruptedException {
-        if (passive != null) {
-            passive.close(false, true);
+        if (passiveConnection != null) {
+            passiveConnection.close(false, true);
         }
-        passive = new NatsConnection(passiveOptions);
+        passiveConnection = new NatsConnection(passiveOptions);
+        passiveConnection.addConnectionListener(new BridgeConnectionListener(false));
         try {
-            passive.connect(true);
+            passiveConnection.connect(true);
+            activeServerPool.passiveConnectSucceeded(passiveConnection.currentServer);
+            passiveServerPool.passiveConnectSucceeded(passiveConnection.currentServer);
         }
         catch (IOException e) {
             throw new RuntimeException("Unable to make Passive connection to NATS servers");
         }
-        if (!passive.isConnected()) {
+        if (!passiveConnection.isConnected()) {
             throw new RuntimeException("Unable to make Passive connection to NATS servers");
         }
     }
 
     @Override
     protected void reconnectImplConnect() throws InterruptedException {
-        if (passive == null) {
+        if (passiveConnection == null) {
             // this can happen on the initial connect, if the bootstrap
             // servers are unreachable.
             // Don't do anything, it will fall into the connect's loop
             return;
         }
 
-        updateStatus(Status.RECONNECTING, passive.currentServer, passive.currentServer);
+        updateStatus(Status.RECONNECTING, passiveConnection.currentServer, passiveConnection.currentServer);
         clearCurrentServer();
 
         try {
@@ -121,7 +164,7 @@ public class ApConnection extends NatsConnection {
                 this.writer.stop().get(timeoutNanos, TimeUnit.NANOSECONDS);
             }
 
-            this.dataPort = passive.dataPort;
+            this.dataPort = passiveConnection.dataPort;
             this.dataPortFuture = new CompletableFuture<>();
             this.dataPortFuture.complete(this.dataPort);
 
@@ -131,8 +174,8 @@ public class ApConnection extends NatsConnection {
             statusLock.lock();
             try {
                 this.connecting = false;
-                this.currentServer = passive.currentServer;
-                this.serverInfo.set(passive.serverInfo.get());
+                this.currentServer = passiveConnection.currentServer;
+                this.serverInfo.set(passiveConnection.serverInfo.get());
                 this.serverAuthErrors.clear(); // reset on successful connection
                 updateStatus(Status.CONNECTED); // will signal status change, we also signal in finally
             }
@@ -163,7 +206,8 @@ public class ApConnection extends NatsConnection {
             }
         }
 
-        apServerPool.setActiveServer(currentServer);
+        activeServerPool.activeConnectSucceeded(currentServer);
+        passiveServerPool.activeConnectSucceeded(currentServer);
         newPassive();
     }
 
@@ -171,10 +215,10 @@ public class ApConnection extends NatsConnection {
     public void close() throws InterruptedException {
         // close the passive
         // - manually send DISCONNECTED to the user's passive connection listener
-        if (passive != null) {
-            passive.close();
+        if (passiveConnection != null) {
+            passiveConnection.close();
             if (apOptions.passiveConnectionListener != null) {
-                passive.updateStatus(Status.CLOSED);
+                passiveConnection.updateStatus(Status.CLOSED);
             }
         }
         super.close();
@@ -188,7 +232,7 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public Status getPassiveStatus() {
-        return passive.getStatus();
+        return passiveConnection.getStatus();
     }
 
     /**
@@ -200,7 +244,7 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public Collection<String> getPassiveServers() {
-        return passive.getServers();
+        return passiveConnection.getServers();
     }
 
     /**
@@ -211,7 +255,7 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public ServerInfo getPassiveServerInfo() {
-        return passive.getServerInfo();
+        return passiveConnection.getServerInfo();
     }
 
     /**
@@ -220,7 +264,7 @@ public class ApConnection extends NatsConnection {
      */
     @Nullable
     public String getPassiveConnectedUrl() {
-        return passive.getConnectedUrl();
+        return passiveConnection.getConnectedUrl();
     }
 
     /**
@@ -231,7 +275,7 @@ public class ApConnection extends NatsConnection {
      * @throws InterruptedException the connection is not connected
      */
     public void passiveForceReconnect() throws IOException, InterruptedException {
-        passive.forceReconnect(ForceReconnectOptions.DEFAULT_INSTANCE);
+        passiveConnection.forceReconnect(ForceReconnectOptions.DEFAULT_INSTANCE);
     }
 
     /**
@@ -244,7 +288,7 @@ public class ApConnection extends NatsConnection {
      * @throws InterruptedException the connection is not connected
      */
     public void passiveForceReconnect(@Nullable ForceReconnectOptions options) throws IOException, InterruptedException {
-        passive.forceReconnect(options);
+        passiveConnection.forceReconnect(options);
     }
 
     /**
@@ -254,6 +298,6 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public Duration passiveRTT() throws IOException {
-        return passive.RTT();
+        return passiveConnection.RTT();
     }
 }
