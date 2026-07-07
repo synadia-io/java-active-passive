@@ -76,6 +76,8 @@ public class ApServerPoolCallbackTests {
             try (ApConnection apc = ApConnection.connect(apOptions)) {
                 assertTrue(apc.isConnected());
 
+                Thread.sleep(1000); // give time for all the callbacks to happen
+
                 // Both pools are handed the active AND passive connect-succeeded callbacks
                 assertFalse(active.activeConnectSucceeded.isEmpty());
                 assertFalse(active.passiveConnectSucceeded.isEmpty());
