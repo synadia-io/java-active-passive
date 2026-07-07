@@ -129,7 +129,7 @@ public class ApConnection extends NatsConnection {
             passiveServerPool.passiveConnectSucceeded(passiveConnection.currentServer);
         }
         catch (IOException e) {
-            throw new RuntimeException("Unable to make Passive connection to NATS servers");
+            throw new RuntimeException("Unable to make Passive connection to NATS servers", e);
         }
         if (!passiveConnection.isConnected()) {
             throw new RuntimeException("Unable to make Passive connection to NATS servers");
