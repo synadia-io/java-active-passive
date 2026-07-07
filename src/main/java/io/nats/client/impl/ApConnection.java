@@ -67,11 +67,17 @@ public class ApConnection extends NatsConnection {
         public void connectionEvent(Connection conn, Events type, Long time, String uriDetails) {
             if (activeListener) {
                 activeServerPool.activeConnectionEvent(type, time, uriDetails);
-                passiveServerPool.activeConnectionEvent(type, time, uriDetails);
+                if (activeServerPool != passiveServerPool) {
+                    // if they are the same pool no need to send this twice
+                    passiveServerPool.activeConnectionEvent(type, time, uriDetails);
+                }
             }
             else {
                 activeServerPool.passiveConnectionEvent(type, time, uriDetails);
-                passiveServerPool.passiveConnectionEvent(type, time, uriDetails);
+                if (activeServerPool != passiveServerPool) {
+                    // if they are the same pool no need to send this twice
+                    passiveServerPool.passiveConnectionEvent(type, time, uriDetails);
+                }
             }
         }
     }
