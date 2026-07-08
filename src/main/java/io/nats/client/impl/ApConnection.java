@@ -67,18 +67,23 @@ public class ApConnection extends NatsConnection {
         public void connectionEvent(Connection conn, Events type, Long time, String uriDetails) {
             if (activeListener) {
                 activeServerPool.activeConnectionEvent(type, time, uriDetails);
-                if (activeServerPool != passiveServerPool) {
-                    // if they are the same pool no need to send this twice
+                if (activeServerPool != passiveServerPool) { // if they are the same pool no need to send this twice
                     passiveServerPool.activeConnectionEvent(type, time, uriDetails);
                 }
             }
             else {
                 activeServerPool.passiveConnectionEvent(type, time, uriDetails);
-                if (activeServerPool != passiveServerPool) {
-                    // if they are the same pool no need to send this twice
+                if (activeServerPool != passiveServerPool) { // if they are the same pool no need to send this twice
                     passiveServerPool.passiveConnectionEvent(type, time, uriDetails);
                 }
             }
+        }
+    }
+
+    private void activeConnectSucceeded() {
+        activeServerPool.activeConnectSucceeded(currentServer);
+        if (activeServerPool != passiveServerPool) { // if they are the same pool no need to send this twice
+            passiveServerPool.activeConnectSucceeded(currentServer);
         }
     }
 
@@ -111,8 +116,7 @@ public class ApConnection extends NatsConnection {
             throw new IOException("Unable to make Active connection to NATS servers");
         }
 
-        activeServerPool.activeConnectSucceeded(currentServer);
-        passiveServerPool.activeConnectSucceeded(currentServer);
+        activeConnectSucceeded();
 
         newPassive();
     }
@@ -145,22 +149,30 @@ public class ApConnection extends NatsConnection {
             return;
         }
 
-        updateStatus(Status.RECONNECTING, passiveConnection.currentServer, passiveConnection.currentServer);
-        clearCurrentServer();
+        if (!passiveConnection.isConnected()) {
+            // if the passive connection is not connected,
+            // there is no point in trying to use it as the replacement
+            // just let the active reconnect
+            passiveConnection = null;
+            super.reconnectImplConnect();
+            return;
+        }
+
+        statusLock.lock();
+        try {
+            if (this.connecting) {
+                return;
+            }
+            this.connecting = true;
+            updateStatus(Status.RECONNECTING, passiveConnection.currentServer, passiveConnection.currentServer);
+            clearCurrentServer();
+            statusChanged.signalAll();
+        }
+        finally {
+            statusLock.unlock();
+        }
 
         try {
-            statusLock.lock();
-            try {
-                if (this.connecting) {
-                    return;
-                }
-                this.connecting = true;
-                statusChanged.signalAll();
-            }
-            finally {
-                statusLock.unlock();
-            }
-
             long timeoutNanos = options.getConnectionTimeout().toNanos();
             // Make sure the reader and writer are stopped
             if (reader.isRunning()) {
@@ -212,8 +224,7 @@ public class ApConnection extends NatsConnection {
             }
         }
 
-        activeServerPool.activeConnectSucceeded(currentServer);
-        passiveServerPool.activeConnectSucceeded(currentServer);
+        activeConnectSucceeded();
         newPassive();
     }
 
