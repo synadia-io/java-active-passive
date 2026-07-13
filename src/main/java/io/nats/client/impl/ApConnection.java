@@ -316,9 +316,9 @@ public class ApConnection extends NatsConnection {
         // already-stopped reader to shut down instead of the live one we just took.
         NatsConnectionReader deadActiveReader = this.reader;
         this.reader = passiveConnection.reader;
-        setReaderConnection(this); // repoint the adopted (live) reader to deliver into this connection
+        reader.setConnection(this); // repoint the adopted (live) reader to deliver into this connection
         passiveConnection.reader = deadActiveReader;
-        passiveConnection.setReaderConnection(passiveConnection); // hand the dead reader back to the passive
+        passiveConnection.reader.setConnection(passiveConnection); // hand the dead reader back to the passive
 
         this.dataPort = passiveConnection.dataPort;
         // the port was connected by the passive connection, so its back-reference points there.
