@@ -167,6 +167,20 @@ public class ApConnection extends NatsConnection {
         }
 
         if (oldPassive != null) {
+            // A non-null oldPassive ONLY happens after a successful steal - the other two newPassive()
+            // callers (the initial connect, and the re-arm after the passive was found already down)
+            // both come in with passiveConnection null. So getting here means this passive was PROMOTED,
+            // not lost: its socket is alive and is now serving THIS (active) connection.
+            //
+            // Detach its listeners before closing it. close() ends with updateStatus(CLOSED), which would
+            // otherwise deliver a CLOSED event to the user's passive ConnectionListener for a connection
+            // that didn't die - it got promoted - leaving the app unable to tell a successful failover
+            // from a passive failure. (CLOSED is the only event this close fires; closeSocketImpl never
+            // passes through DISCONNECTED, and updateStatus goes straight from CONNECTED to CLOSED.)
+            // Clearing also drops our BridgeConnectionListener, so the server pools don't get a bogus
+            // passiveConnectionEvent(CLOSED) either.
+            oldPassive.connectionListeners.clear();
+
             // Close the old passive in the background so we can get the new passive connected faster.
             // Its reader/dataPort were handed off in reconnectImplConnect, so this close touches neither
             // the adopted reader nor the live socket.
@@ -279,6 +293,33 @@ public class ApConnection extends NatsConnection {
             processException(e);
         }
 
+        // Discard the PINGs we had outstanding on the socket we just let go of. Their PONGs are never
+        // coming - the socket is gone - so the futures must be cancelled rather than left queued.
+        // A normal (re)connect gets this for free: tryToConnect calls cleanUpPongQueue before it
+        // connects the new port. The steal never goes through tryToConnect, so we do it here.
+        //
+        // This matters more than it looks. sendPing trips handleCommunicationIssue("Max outgoing Ping
+        // count exceeded.") once pongQueue.size() + 1 > maxPingsOut, and maxPingsOut defaults to 2. The
+        // dead socket typically has unanswered PINGs on it precisely BECAUSE it went unresponsive, so
+        // carrying them over means the first softPing after promotion can immediately declare a
+        // communication issue and spawn a reconnect on the connection we just successfully failed over
+        // to. It also releases anything parked in flush() on a pongFuture for the old socket, which
+        // would otherwise block until its timeout.
+        //
+        // Emptying the queue also makes us robust to the in-flight PONG the PASSIVE had outstanding on
+        // this socket: it arrives after the adoption and lands in handlePong on THIS connection, which
+        // is a no-op on an empty queue instead of spuriously completing one of our futures.
+        cleanUpPongQueue();
+
+        // needPing means "no inbound traffic seen, so a PING is needed to prove liveness" - deliverMessage
+        // clears it. It is per-CONNECTION state describing the CURRENT socket, and the socket is about to
+        // be swapped, so the value we are holding describes the dead one. Reset it: we have seen nothing
+        // on the promoted socket, because on this connection nothing has arrived over it yet.
+        // Without this, an active that delivered a message shortly before its socket failed carries a
+        // cleared needPing across the steal, and the softPing below would skip - so the promoted socket
+        // would silently get no ping at all.
+        needPing.set(true);
+
         // Stop the passive's writer so it doesn't share the socket with the active's writer. It blocks
         // on its queue, so stop() (poison pill) is clean; join it before our writer takes the socket.
         Future<Boolean> passiveWriterStopped = passiveConnection.writer.isRunning()
@@ -349,6 +390,26 @@ public class ApConnection extends NatsConnection {
             statusLock.unlock();
         }
 
+        // Put a PING on the promoted socket. Every normal connect ends with a ping/pong round trip
+        // (tryToConnect does sendPing and waits on it before it reports CONNECTED); the steal is the one
+        // path that reaches CONNECTED without ever touching the wire, so send one here too.
+        //
+        // Deliberately NOT waited on. The switch is already complete and the socket was warm - the
+        // passive was holding it and pinging it on its own timer - so there's nothing to gain from
+        // blocking the failover on a round trip. If the socket does turn out to be dead the PONG simply
+        // never lands, and the ordinary ping timer / maxPingsOut machinery reconnects us exactly as it
+        // would for any other connection.
+        //
+        // softPing rather than sendPing: this is a liveness check on a socket that has just started
+        // serving us, which is exactly what the ping timer does, so it belongs on the same footing -
+        // the standard outgoing queue, ordered behind whatever is already queued, rather than jumping
+        // the internal queue the way a connect-time ping does. It also stays honest about the point of
+        // a ping: once traffic starts arriving on the promoted socket, deliverMessage clears needPing
+        // and a redundant ping is skipped.
+        // It does send here - needPing was reset above, so the skip branch can't apply - and the pong
+        // queue was emptied above, so it can't trip maxPingsOut either.
+        softPing();
+
         activeConnectSucceeded();
         reArmPassive();
     }
@@ -373,13 +434,54 @@ public class ApConnection extends NatsConnection {
         // close the passive
         // - manually send DISCONNECTED to the user's passive connection listener
         if (passiveConnection != null) {
+            // close() already ends with updateStatus(Status.CLOSED), which fires the CLOSED event to the
+            // user's passive ConnectionListener. A second updateStatus(Status.CLOSED) here was a no-op -
+            // updateStatus returns early when newStatus == oldStatus - so it has been removed.
             passiveConnection.close();
-            if (apOptions.passiveConnectionListener != null) {
-                passiveConnection.updateStatus(Status.CLOSED);
-            }
         }
         super.close();
         apOptions.options.shutdownExecutors();
+    }
+
+    /**
+     * Immediately let go of the current active connection and switch over to the passive,
+     * promoting the passive's live socket to be the active connection. This is the same failover
+     * that happens when the active's socket dies, just triggered on demand instead of by a failure:
+     * the active's socket is force closed - nothing queued on it is flushed - and once the switch
+     * is complete a new passive is armed.
+     * <p>This is a no-op if a (re)connect is already in progress on the active, since that reconnect
+     * will itself promote the passive.
+     * @throws IllegalStateException there is no connected passive to switch to
+     * @throws InterruptedException the thread is interrupted while switching
+     */
+    public void switchToPassive() throws InterruptedException {
+        // Check before letting go of the active. Without a live passive to promote, reconnectImplConnect
+        // would fall back to a normal reconnect through the server pool (or, with no passive at all,
+        // do nothing and let reconnectImpl close us) - neither is what the caller asked for.
+        // This is inherently best effort: the passive can still die between here and the steal, in
+        // which case that same fallback applies.
+        NatsConnection currentPassive = passiveConnection;
+        if (currentPassive == null || !currentPassive.isConnected()) {
+            throw new IllegalStateException("There is no connected passive connection to switch to.");
+        }
+
+        // Deliberately NOT forceReconnect(). forceReconnectImpl does its own teardown first - nulls
+        // dataPort and closes it on a background task, nulls dataPortFuture, stops reader and writer
+        // on a 100ms budget and swallows the timeout - which is teardown written for reconnecting
+        // through the server pool. reconnectImplConnect below does the teardown the STEAL needs
+        // (stop before force close so the loops read the IOException as shutdown, then bounded joins),
+        // and it needs the live dataPort/reader still in place to do it. So do the least possible
+        // here - just make the connection look disconnected so reconnectImpl runs the connect step -
+        // and let the failover path let go of the socket itself.
+        if (tryingToConnect.compareAndSet(false, true)) {
+            try {
+                updateStatus(Status.DISCONNECTED);
+                reconnectImpl(); // -> our reconnectImplConnect -> steal the passive -> reArmPassive
+            }
+            finally {
+                tryingToConnect.set(false);
+            }
+        }
     }
 
     /**

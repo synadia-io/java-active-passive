@@ -2,6 +2,7 @@ package io.nats.client.impl;
 
 import io.nats.NatsRunnerUtils;
 import io.nats.NatsServerRunner;
+import io.nats.client.Connection;
 import io.nats.client.ConnectionListener;
 import io.nats.client.ForceReconnectOptions;
 import io.nats.client.Options;
@@ -9,6 +10,9 @@ import io.nats.client.support.Listener;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -172,6 +176,14 @@ public class ApTests {
         }
     }
 
+    // A promoted passive is not a lost passive - its socket is alive and now serving the active - so
+    // the user's passive ConnectionListener must never see CLOSED for it. Checked by count rather than
+    // by a queued future so it reads as "this never happened" instead of "this hasn't happened yet".
+    private static void assertNoPromotionClosed(OptionsHelper helper) {
+        assertEquals(0, helper.passiveListener.getConnectionEventCount(ConnectionListener.Events.CLOSED),
+            "the promoted passive must not report CLOSED to the passive listener");
+    }
+
     @Test
     public void testForceReconnect() throws Exception {
         try (NatsServerRunner server1 = new NatsServerRunner()) {
@@ -188,15 +200,160 @@ public class ApTests {
 
                         helper.activeListener.queueConnectionEvent(ConnectionListener.Events.DISCONNECTED);
                         helper.activeListener.queueConnectionEvent(ConnectionListener.Events.RECONNECTED);
-                        helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
+                        // Only CONNECTED for the new passive. The promoted passive must NOT report
+                        // CLOSED - see assertNoPromotionClosed.
                         helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
                         apc.forceReconnect(ForceReconnectOptions.FORCE_CLOSE_INSTANCE);
                         helper.activeListener.validateAll();
                         helper.passiveListener.validateAll();
+                        assertNoPromotionClosed(helper);
 
                         assertNotEquals(
                             apc.getServerInfo().getServerId(),
                             apc.getPassiveServerInfo().getServerId());
+                    }
+                    catch (InterruptedException | IOException e) {
+                        fail();
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testSwitchToPassive() throws Exception {
+        try (NatsServerRunner server1 = new NatsServerRunner()) {
+            try (NatsServerRunner server2 = new NatsServerRunner()) {
+                try (NatsServerRunner server3 = new NatsServerRunner()) {
+                    Options.Builder builder = new Options.Builder(getOptions(server1, server2, server3))
+                        .noRandomize();
+                    OptionsHelper helper = new OptionsHelper(builder);
+                    try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                        helper.validateConnected();
+
+                        String originalActiveId = apc.getServerInfo().getServerId();
+                        String originalPassiveId = apc.getPassiveServerInfo().getServerId();
+                        assertNotEquals(originalActiveId, originalPassiveId);
+
+                        long pingsBefore = apc.getStatistics().getPings();
+
+                        // Stand in for the active having delivered a message just before its socket
+                        // failed - deliverMessage clears needPing. That flag describes the socket we are
+                        // about to throw away, so it must not be allowed to suppress the ping on the
+                        // promoted one.
+                        apc.needPing.set(false);
+
+                        helper.activeListener.queueConnectionEvent(ConnectionListener.Events.DISCONNECTED);
+                        helper.activeListener.queueConnectionEvent(ConnectionListener.Events.RECONNECTED);
+                        helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
+
+                        apc.switchToPassive();
+
+                        helper.activeListener.validateAll();
+                        helper.passiveListener.validateAll();
+                        assertNoPromotionClosed(helper);
+
+                        // the switch put a PING on the promoted socket, the way a normal connect does
+                        assertTrue(apc.getStatistics().getPings() > pingsBefore,
+                            "the switch did not send a ping on the promoted socket");
+
+                        // the active is now serving the socket the passive was holding
+                        assertEquals(originalPassiveId, apc.getServerInfo().getServerId());
+
+                        // and a fresh passive was armed on some other server
+                        assertNotEquals(
+                            apc.getServerInfo().getServerId(),
+                            apc.getPassiveServerInfo().getServerId());
+
+                        // the promoted socket really works - this round trips over it
+                        assertNotNull(apc.RTT());
+                    }
+                    catch (InterruptedException | IOException e) {
+                        fail();
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testSwitchToPassiveNoPassive() throws Exception {
+        try (NatsServerRunner server1 = new NatsServerRunner()) {
+            try (NatsServerRunner server2 = new NatsServerRunner()) {
+                OptionsHelper helper = getHelper(server1, server2);
+                try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                    helper.validateConnected();
+
+                    // take the passive away, there is nothing to switch to
+                    apc.passiveConnection.close();
+                    assertThrows(IllegalStateException.class, apc::switchToPassive);
+
+                    // and the active was left alone - we check before letting go of it
+                    assertEquals(Connection.Status.CONNECTED, apc.getStatus());
+                    assertNotNull(apc.RTT());
+                }
+                catch (InterruptedException | IOException e) {
+                    fail();
+                }
+            }
+        }
+    }
+
+    // The dead socket usually has unanswered PINGs on it - that is often WHY it is being failed away
+    // from. Carrying them into the promoted connection means the next softPing sees
+    // pongQueue.size() + 1 > maxPingsOut and raises "Max outgoing Ping count exceeded", which spawns a
+    // reconnect on the connection we just failed over to. The switch must discard them.
+    @Test
+    public void testSwitchToPassiveClearsOutstandingPings() throws Exception {
+        try (NatsServerRunner server1 = new NatsServerRunner()) {
+            try (NatsServerRunner server2 = new NatsServerRunner()) {
+                try (NatsServerRunner server3 = new NatsServerRunner()) {
+                    Options.Builder builder = new Options.Builder(getOptions(server1, server2, server3))
+                        .noRandomize();
+                    OptionsHelper helper = new OptionsHelper(builder);
+                    try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                        helper.validateConnected();
+
+                        // stand in for PINGs written to the active's socket whose PONGs never came back.
+                        // Fill to maxPingsOut so that inheriting even one of them would trip sendPing.
+                        int maxPingsOut = helper.options.getMaxPingsOut();
+                        assertTrue(maxPingsOut > 0);
+                        List<CompletableFuture<Boolean>> orphaned = new ArrayList<>();
+                        for (int i = 0; i < maxPingsOut; i++) {
+                            CompletableFuture<Boolean> pongFuture = new CompletableFuture<>();
+                            orphaned.add(pongFuture);
+                            apc.pongQueue.add(pongFuture);
+                        }
+                        assertEquals(maxPingsOut, apc.pongQueue.size());
+
+                        helper.activeListener.queueConnectionEvent(ConnectionListener.Events.DISCONNECTED);
+                        helper.activeListener.queueConnectionEvent(ConnectionListener.Events.RECONNECTED);
+                        helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
+
+                        apc.switchToPassive();
+
+                        helper.activeListener.validateAll();
+                        helper.passiveListener.validateAll();
+
+                        // The promoted connection did not inherit the dead socket's pings, and whoever
+                        // was waiting on them was released rather than left parked.
+                        // Asserted per future rather than as pongQueue.isEmpty(): the switch sends a
+                        // fresh PING on the promoted socket, so the queue legitimately holds that one
+                        // until its PONG lands.
+                        for (CompletableFuture<Boolean> pongFuture : orphaned) {
+                            assertFalse(apc.pongQueue.contains(pongFuture),
+                                "an orphaned pong future survived the switch");
+                            assertTrue(pongFuture.isDone(),
+                                "an orphaned pong future was left uncompleted");
+                        }
+
+                        // a real ping round trip still works, so the ping budget was not exhausted
+                        assertNotNull(apc.RTT());
+                        assertEquals(Connection.Status.CONNECTED, apc.getStatus());
+
+                        // no second failover was provoked by "Max outgoing Ping count exceeded"
+                        assertEquals(1,
+                            helper.activeListener.getConnectionEventCount(ConnectionListener.Events.RECONNECTED));
                     }
                     catch (InterruptedException | IOException e) {
                         fail();
