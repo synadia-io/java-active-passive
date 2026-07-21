@@ -1,5 +1,6 @@
 package io.nats.client.impl;
 
+import io.nats.client.ConnectionListener;
 import io.nats.client.Options;
 import io.nats.client.ServerPool;
 import io.nats.client.support.NatsUri;
@@ -13,21 +14,44 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class ApPassiveServerPool implements ServerPool {
+public class ApPassiveServerPool implements ApServerPool {
     final ServerPool pool;
     final AtomicReference<NatsUri> activeServerRef;
+    final AtomicReference<NatsUri> passiveServerRef;
     final Map<String, List<String>> resolvedMap;
     Options.HostnameResolveMode resolveMode;
+
+    public ApPassiveServerPool() {
+        this(new NatsServerPool());
+    }
 
     public ApPassiveServerPool(ServerPool pool) {
         this.pool = pool;
         activeServerRef = new AtomicReference<>();
+        passiveServerRef = new AtomicReference<>();
         resolvedMap = new HashMap<>();
     }
 
-    public void setActiveServer(NatsUri activeNuri) {
-        activeServerRef.set(activeNuri);
-        resolve(activeNuri);
+    @Override
+    public void activeConnectSucceeded(NatsUri nuri) {
+        activeServerRef.set(nuri);
+        resolve(nuri);
+    }
+
+    @Override
+    public void passiveConnectSucceeded(NatsUri nuri) {
+        passiveServerRef.set(nuri);
+        resolve(nuri);
+    }
+
+    @Override
+    public void activeConnectionEvent(ConnectionListener.Events type, Long time, String uriDetails) {
+        // TODO What to do here?
+    }
+
+    @Override
+    public void passiveConnectionEvent(ConnectionListener.Events type, Long time, String uriDetails) {
+        // TODO What to do here?
     }
 
     @Override

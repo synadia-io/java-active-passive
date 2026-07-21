@@ -9,9 +9,13 @@ public class ApOptions {
     public final Options options;
     public final ConnectionListener passiveConnectionListener;
     public final ErrorListener passiveErrorListener;
+    public final ApServerPool activeServerPool;
+    public final ApServerPool passiveServerPool;
 
     public ApOptions(Builder b) {
         this.options = b.options;
+        this.activeServerPool = b.activeServerPool;
+        this.passiveServerPool = b.passiveServerPool;
         this.passiveConnectionListener = b.passiveConnectionListener;
         this.passiveErrorListener = b.passiveErrorListener;
     }
@@ -26,6 +30,8 @@ public class ApOptions {
 
     public static class Builder {
         Options options;
+        ApServerPool activeServerPool;
+        ApServerPool passiveServerPool;
         ConnectionListener passiveConnectionListener;
         ErrorListener passiveErrorListener;
 
@@ -34,6 +40,8 @@ public class ApOptions {
         public Builder(ApOptions ap) {
             if (ap != null) {
                 this.options = new Options.Builder(ap.options).build();
+                this.activeServerPool = ap.activeServerPool;
+                this.passiveServerPool = ap.passiveServerPool;
                 this.passiveConnectionListener = ap.passiveConnectionListener;
                 this.passiveErrorListener = ap.passiveErrorListener;
             }
@@ -41,6 +49,16 @@ public class ApOptions {
 
         public Builder options(Options options) {
             this.options = options;
+            return this;
+        }
+
+        public Builder activeServerPool(ApServerPool activeServerPool) {
+            this.activeServerPool = activeServerPool;
+            return this;
+        }
+
+        public Builder passiveServerPool(ApServerPool passiveServerPool) {
+            this.passiveServerPool = passiveServerPool;
             return this;
         }
 
