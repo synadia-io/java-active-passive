@@ -89,23 +89,41 @@ public class ApPassiveServerPool implements ApServerPool {
         return peek;
     }
 
-    private boolean isEquivalent(NatsUri test, NatsUri active) {
-        String testHost = test.getHost();
-        String activeHost = active.getHost();
+    protected boolean isEquivalent(NatsUri testNuri, NatsUri activeNuri) {
+        // Step 1. if they aren't the same port, they are never equivalent, even on the same host
+        int testPort = testNuri.getPort();
+        int activePort = activeNuri.getPort();
+        if (testPort != activePort) {
+            return false;
+        }
+        // At this point, the port is known to be the same
+
+        // Step 2. if same host string (since ports are known to be the same) they are equivalent
+        //         reminder *Host can be a name or an ip address.
+        String testHost = testNuri.getHost().toLowerCase();
+        String activeHost = activeNuri.getHost().toLowerCase();
         if (testHost.equals(activeHost)) {
             return true;
         }
+
+        // Resolve mode means we're allowed to resolve,
+        // Meaning host names must be resolved to ip addresses and tested
         if (resolveMode.resolve) {
-            // The NATS server reports discovered servers as IP addresses, while users typically
-            // supply hostnames - so a comparison is always host-vs-IP, never hostname-vs-hostname
-            // by resolution (two distinct hostnames only match by the direct equality check above).
-            if (active.hostIsIpAddress()) {
-                // active is an IP: equivalent only to a test hostname that resolves to that IP.
-                return !test.hostIsIpAddress() && _resolveHostToIps(testHost).contains(activeHost);
+            boolean activeIsIp = activeNuri.hostIsIpAddress();
+            boolean testIsIp = testNuri.hostIsIpAddress();
+
+            // if neither are a host name (both are ip) it would have matched in Step 2
+            if (activeIsIp && testIsIp) {
+                return false;
             }
-            // active is a hostname: equivalent only to a test IP that is one of its resolved IPs.
-            return test.hostIsIpAddress() && _resolveHostToIps(activeHost).contains(testHost);
+
+            List<String> activeIps = activeIsIp ? Collections.singletonList(activeHost) : _resolveHostToIps(activeHost);
+            List<String> testIps = testIsIp ? Collections.singletonList(testHost) : _resolveHostToIps(testHost);
+            // disjoint returns true if the two collections have NO elements in common.
+            // if the lists of ip addresses have any elements in common, they are equivalent.
+            return !Collections.disjoint(activeIps, testIps);
         }
+
         return false;
     }
 
@@ -131,7 +149,7 @@ public class ApPassiveServerPool implements ApServerPool {
         return _resolveHostToIps(host);
     }
 
-    private @NonNull List<String> _resolveHostToIps(@NonNull String host) {
+    protected @NonNull List<String> _resolveHostToIps(@NonNull String host) {
         List<String> resolved = resolvedMap.get(host);
         if (resolved == null) {
             resolved = pool.resolveHostToIps(host, resolveMode.maxOneResult, resolveMode.includeIPV6);
