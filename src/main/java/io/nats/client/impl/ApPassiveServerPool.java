@@ -83,7 +83,7 @@ public class ApPassiveServerPool implements ApServerPool {
             pool.nextServer(); // advance and peek again
             peek = pool.peekNextServer();
             if (peek == firstPeek) { // if we've looped around, nothing else we can do
-                break;
+                return null;
             }
         }
         return peek;

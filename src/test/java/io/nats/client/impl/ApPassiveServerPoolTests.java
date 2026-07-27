@@ -138,8 +138,7 @@ public class ApPassiveServerPoolTests {
         fake.peekQueue.add(uri("nats://b.example.com:4222"));
 
         NatsUri peeked = sp.peekNextServer();
-        assertNotNull(peeked);
-        assertEquals("b.example.com", peeked.getHost()); // not skipped despite shared IP
+        assertNull(peeked);
     }
 
     @Test
@@ -429,7 +428,7 @@ public class ApPassiveServerPoolTests {
         fake.peekQueue.add(sameRef);
 
         // peek == firstPeek guard must break the loop and return the (equivalent) server
-        assertSame(sameRef, sp.peekNextServer());
+        assertNull(sp.peekNextServer());
     }
 
     @Test
