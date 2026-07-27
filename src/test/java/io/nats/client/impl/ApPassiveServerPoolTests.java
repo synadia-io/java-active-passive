@@ -442,8 +442,8 @@ public class ApPassiveServerPoolTests {
         NatsUri sameRef = uri("nats://h.example.com:4222");
         fake.peekQueue.add(sameRef);
 
-        // server == firstServer guard must break the loop and return the (equivalent) server
-        assertSame(sameRef, sp.nextServer());
+        // server == firstServer guard must break the loop and returns null
+        assertNull(sp.nextServer());
     }
 
     // ----------------------------------------------------------------------------------------

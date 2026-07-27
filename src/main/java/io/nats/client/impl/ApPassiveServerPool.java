@@ -138,7 +138,7 @@ public class ApPassiveServerPool implements ApServerPool {
         while (server != null && isEquivalent(server, active)) {
             server = pool.nextServer(); // get the next nextServer
             if (server == firstServer) { // if we've looped around, nothing else we can do
-                break;
+                return null;
             }
         }
         return server;
