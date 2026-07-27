@@ -28,11 +28,11 @@ jobs:
           java-version: 25
           distribution: 'temurin'
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: current
       - name: Setup GO
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: stable
       - name: Install Nats Server
@@ -45,33 +45,18 @@ jobs:
           go build -o ~/.local/bin/nats-server
           nats-server -v
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Build and Test
         run: chmod +x gradlew && ./gradlew clean test jacocoTestReport
 #      - name: Verify Javadoc
 #        run: ./gradlew javadoc
       - name: Send coverage to Coveralls
+        if: matrix.tc == 21
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.COVERALLS_REPO_TOKEN }}
-          parallel: true
-          flag-name: tc${{ matrix.tc }}
       - name: Publish Snapshot
         run: ./gradlew -i publishToSonatype
       - name: Clean up
         if: always()
         run: pkill -9 nats-server 2>/dev/null || true
-
-  coveralls-finish:
-    needs: build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./core
-    steps:
-      - name: Coveralls Finish
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
-          carryforward: "tc17"
