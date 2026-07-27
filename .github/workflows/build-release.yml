@@ -28,10 +28,10 @@ jobs:
           java-version: 25
           distribution: 'temurin'
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: current
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Build, Sign and Publish Release
         run: chmod +x gradlew && ./gradlew clean compileJava publishToSonatype closeAndReleaseSonatypeStagingRepository
