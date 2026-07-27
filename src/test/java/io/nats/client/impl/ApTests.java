@@ -133,44 +133,35 @@ public class ApTests {
 
     @Test
     public void testConnect() throws Exception {
+        // Two servers: the active takes one, the passive must take the other (a passive can no longer
+        // co-locate with the active, so a single-server pool has no room for a passive).
         try (NatsServerRunner server1 = new NatsServerRunner()) {
-            OptionsHelper helper = getHelper(server1);
+            try (NatsServerRunner server2 = new NatsServerRunner()) {
+                OptionsHelper helper = getHelper(server1, server2);
 
-            try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                    helper.activeListener.validate();
+                    helper.passiveListener.validate();
+                    helper.activeListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
+                    helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
+                }
+                catch (InterruptedException | IOException e) {
+                    fail();
+                }
                 helper.activeListener.validate();
                 helper.passiveListener.validate();
-                helper.activeListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
-                helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
             }
-            catch (InterruptedException | IOException e) {
-                fail();
-            }
-            helper.activeListener.validate();
-            helper.passiveListener.validate();
         }
     }
 
     @Test
     public void testServerPoolBehavior() throws Exception {
         try (NatsServerRunner server1 = new NatsServerRunner()) {
-            // only 1 server, nothing we can do
-            // to prevent passive from being the same as active
-            // this confirms that ApPassiveServerPool works
-            OptionsHelper helper = getHelper(server1);
-            try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
-                helper.validateConnected();
-                assertEquals(
-                    apc.getServerInfo().getServerId(),
-                    apc.getPassiveServerInfo().getServerId());
-            }
-            catch (InterruptedException | IOException e) {
-                fail();
-            }
-
             try (NatsServerRunner server2 = new NatsServerRunner()) {
                 try (NatsServerRunner server3 = new NatsServerRunner()) {
-                    // make sure passive never is the same as active
-                    helper = getHelper(server1, server2, server3);
+                    // the passive must never land on the same server as the active, and it stays distinct
+                    // even after the passive reconnects on its own.
+                    OptionsHelper helper = getHelper(server1, server2, server3);
                     try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
                         helper.validateConnected();
                         assertNotEquals(

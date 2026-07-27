@@ -124,7 +124,7 @@ public class ApPassiveServerPoolTests {
     // ----------------------------------------------------------------------------------------
 
     @Test
-    public void isEquivalent_B1_twoDistinctHostnames_neverEquivalent() {
+    public void isEquivalent_B1_twoDistinctHostnames_sharedIps_equivalent() {
         // Discovered servers always come back as IPs and users supply hostnames, so two distinct
         // hostnames never get compared by resolution - only by direct equality. A shared resolved
         // IP does NOT make them equivalent.
@@ -138,8 +138,7 @@ public class ApPassiveServerPoolTests {
         fake.peekQueue.add(uri("nats://b.example.com:4222"));
 
         NatsUri peeked = sp.peekNextServer();
-        assertNotNull(peeked);
-        assertEquals("b.example.com", peeked.getHost()); // not skipped despite shared IP
+        assertNull(peeked);
     }
 
     @Test
@@ -428,8 +427,8 @@ public class ApPassiveServerPoolTests {
         NatsUri sameRef = uri("nats://h.example.com:4222"); // only candidate, always equivalent
         fake.peekQueue.add(sameRef);
 
-        // peek == firstPeek guard must break the loop and return the (equivalent) server
-        assertSame(sameRef, sp.peekNextServer());
+        // peek == firstPeek guard must break the loop and returns null
+        assertNull(sp.peekNextServer());
     }
 
     @Test
@@ -442,8 +441,8 @@ public class ApPassiveServerPoolTests {
         NatsUri sameRef = uri("nats://h.example.com:4222");
         fake.peekQueue.add(sameRef);
 
-        // server == firstServer guard must break the loop and return the (equivalent) server
-        assertSame(sameRef, sp.nextServer());
+        // server == firstServer guard must break the loop and returns null
+        assertNull(sp.nextServer());
     }
 
     // ----------------------------------------------------------------------------------------
