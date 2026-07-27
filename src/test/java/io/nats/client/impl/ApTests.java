@@ -98,22 +98,36 @@ public class ApTests {
     @Test
     public void testSomeBadServers() throws Exception {
         try (NatsServerRunner server1 = new NatsServerRunner()) {
-            OptionsHelper helper = getHelper(4444, server1.getPort()); // 1 server ports that won't exist
-
-            helper.activeListener.reset();
-            helper.activeListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
-            helper.activeListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
-
-            helper.passiveListener.reset();
-            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.DISCONNECTED);
-            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CONNECTED);
-            helper.passiveListener.queueConnectionEvent(ConnectionListener.Events.CLOSED);
-
-            try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
-                assertEquals(apc.getServerInfo().getServerId(), apc.getPassiveServerInfo().getServerId());
+            try (NatsServerRunner server2 = new NatsServerRunner()) {
+                // A dead server plus two good ones. The active takes a good server (skipping the dead one),
+                // and the passive must take a DISTINCT good server - a different port is no longer treated
+                // as equivalent, so the passive will not co-locate with the active. (Two good servers are
+                // required: with only one, the passive has no distinct server to connect to and the connect
+                // fails - which is the corrected behavior.)
+                OptionsHelper helper = getHelper(4444, server1.getPort(), server2.getPort());
+                try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                    helper.validateConnected();
+                    assertNotEquals(
+                        apc.getServerInfo().getServerId(),
+                        apc.getPassiveServerInfo().getServerId());
+                }
+                catch (InterruptedException | IOException e) {
+                    fail();
+                }
             }
-            helper.activeListener.validateAll();
-            helper.passiveListener.validateAll();
+        }
+    }
+
+    @Test
+    public void testPassiveRequiresDistinctServer() throws Exception {
+        try (NatsServerRunner server1 = new NatsServerRunner()) {
+            // A dead server plus ONE good server. The active takes the good server, but the passive has
+            // no DISTINCT server to take - co-locating with the active is no longer allowed - so the
+            // bootstrap fails. (This is the behavior that replaced the old faulty co-location.)
+            ApOptions apOptions = getApOptions(4444, server1.getPort());
+            //noinspection resource
+            RuntimeException e = assertThrows(RuntimeException.class, () -> ApConnection.connect(apOptions));
+            assertTrue(e.getMessage().contains("Passive"));
         }
     }
 
