@@ -118,10 +118,10 @@ public class ApPassiveServerPool implements ApServerPool {
             }
 
             List<String> activeIps = activeIsIp ? Collections.singletonList(activeHost) : _resolveHostToIps(activeHost);
-            List<String> testIp = testIsIp ? Collections.singletonList(testHost) : _resolveHostToIps(testHost);
+            List<String> testIps = testIsIp ? Collections.singletonList(testHost) : _resolveHostToIps(testHost);
             // disjoint returns true if the two collections have NO elements in common.
             // if the lists of ip addresses have any elements in common, they are equivalent.
-            return !Collections.disjoint(activeIps, testIp);
+            return !Collections.disjoint(activeIps, testIps);
         }
 
         return false;

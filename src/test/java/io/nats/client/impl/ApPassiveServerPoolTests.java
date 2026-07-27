@@ -99,7 +99,9 @@ public class ApPassiveServerPoolTests {
         fake.peekQueue.add(uri("nats://alpha.example.com:4222")); // same host -> skipped
         fake.peekQueue.add(uri("nats://beta.example.com:4222"));
 
-        assertEquals("beta.example.com", sp.peekNextServer().getHost());
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("beta.example.com", peeked.getHost());
     }
 
 
@@ -112,7 +114,9 @@ public class ApPassiveServerPoolTests {
         sp.activeConnectSucceeded(uri("nats://alpha.example.com:4222"));
         fake.peekQueue.add(uri("nats://beta.example.com:4222"));
 
-        assertEquals("beta.example.com", sp.peekNextServer().getHost());
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("beta.example.com", peeked.getHost());
     }
 
     // ----------------------------------------------------------------------------------------
@@ -133,7 +137,9 @@ public class ApPassiveServerPoolTests {
         sp.activeConnectSucceeded(uri("nats://a.example.com:4222"));
         fake.peekQueue.add(uri("nats://b.example.com:4222"));
 
-        assertEquals("b.example.com", sp.peekNextServer().getHost()); // not skipped despite shared IP
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("b.example.com", peeked.getHost()); // not skipped despite shared IP
     }
 
     @Test
@@ -149,7 +155,9 @@ public class ApPassiveServerPoolTests {
         fake.peekQueue.add(uri("nats://b.example.com:4222")); // resolves to active IP -> skipped
         fake.peekQueue.add(uri("nats://c.example.com:4222")); // distinct -> returned
 
-        assertEquals("c.example.com", sp.peekNextServer().getHost());
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("c.example.com", peeked.getHost());
     }
 
     @Test
@@ -162,7 +170,9 @@ public class ApPassiveServerPoolTests {
         sp.activeConnectSucceeded(uri("nats://10.0.0.1:4222"));
         fake.peekQueue.add(uri("nats://b.example.com:4222"));
 
-        assertEquals("b.example.com", sp.peekNextServer().getHost()); // not skipped
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("b.example.com", peeked.getHost()); // not skipped
     }
 
     @Test
@@ -178,7 +188,9 @@ public class ApPassiveServerPoolTests {
         fake.peekQueue.add(uri("nats://10.0.0.1:4222"));      // active resolves to this IP -> skipped
         fake.peekQueue.add(uri("nats://c.example.com:4222")); // distinct -> returned
 
-        assertEquals("c.example.com", sp.peekNextServer().getHost());
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("c.example.com", peeked.getHost());
 
         // comparing a literal-IP peer must not resolve it or pollute the cache
         assertFalse(sp.resolvedMap.containsKey("10.0.0.1"));
@@ -195,7 +207,9 @@ public class ApPassiveServerPoolTests {
         sp.activeConnectSucceeded(uri("nats://a.example.com:4222"));
         fake.peekQueue.add(uri("nats://10.0.0.9:4222")); // not one of active's resolved IPs
 
-        assertEquals("10.0.0.9", sp.peekNextServer().getHost()); // not skipped
+        NatsUri peeked = sp.peekNextServer();
+        assertNotNull(peeked);
+        assertEquals("10.0.0.9", peeked.getHost()); // not skipped
     }
 
     // ----------------------------------------------------------------------------------------
@@ -399,6 +413,7 @@ public class ApPassiveServerPoolTests {
         // isEquivalent now compares port first, so the same host on a different port is NOT equivalent -
         // h.example.com:6222 is the first distinct server and is returned ahead of other.example.com.
         NatsUri next = sp.nextServer();
+        assertNotNull(next);
         assertEquals("h.example.com", next.getHost());
         assertEquals(6222, next.getPort());
     }
