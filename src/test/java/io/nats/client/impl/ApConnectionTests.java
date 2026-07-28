@@ -115,4 +115,41 @@ public class ApConnectionTests {
             }
         }
     }
+
+    // Defense-in-depth for the ACTUAL issue #20 scenario: a genuinely live, connected ApConnection whose
+    // passiveConnection is nulled out for the duration of a reconnect. The server-free tests above cover
+    // the same null branch on an unconnected instance; this reproduces it on a real connection (null the
+    // field, assert, then restore it so close() tears the real passive down).
+    @Test
+    public void liveConnection_passiveNulledMidReconnect_accessorsAreNullSafe() throws Exception {
+        try (NatsServerRunner server1 = new NatsServerRunner();
+             NatsServerRunner server2 = new NatsServerRunner()) {
+            Options options = Options.builder()
+                .servers(new String[]{
+                    NatsRunnerUtils.getNatsLocalhostUri(server1.getPort()),
+                    NatsRunnerUtils.getNatsLocalhostUri(server2.getPort())
+                })
+                .build();
+            ApOptions apOptions = ApOptions.builder(options).build();
+            try (ApConnection apc = ApConnection.connect(apOptions)) {
+                NatsConnection realPassive = apc.passiveConnection;
+                assertNotNull(realPassive, "precondition: a passive should be connected");
+                apc.passiveConnection = null; // the reconnect window
+                try {
+                    assertEquals(Connection.Status.DISCONNECTED, apc.getPassiveStatus());
+                    assertTrue(apc.getPassiveServers().isEmpty());
+                    assertSame(ServerInfo.EMPTY_INFO, apc.getPassiveServerInfo());
+                    assertNull(apc.getPassiveConnectedUrl());
+                    assertDoesNotThrow(() -> apc.passiveForceReconnect());
+                    assertDoesNotThrow(() -> apc.passiveForceReconnect(ForceReconnectOptions.DEFAULT_INSTANCE));
+                    Throwable t = assertThrows(Throwable.class, apc::passiveRTT);
+                    assertFalse(t instanceof NullPointerException,
+                        "passiveRTT must not NPE on a null passive, but threw: " + t);
+                }
+                finally {
+                    apc.passiveConnection = realPassive; // restore so close() cleans it up
+                }
+            }
+        }
+    }
 }
