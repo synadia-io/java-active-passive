@@ -1,0 +1,81 @@
+name: jnats canary
+
+# Once a day: build + test THIS repo against jnats' current main snapshot, across the same target
+# compatibilities as build-pr.yml, to catch breakage early.
+#
+# jnats' current snapshot version is its build.gradle `jarVersion` + "-SNAPSHOT", read straight from
+# jnats main (raw.githubusercontent.com - public, no token). Reading source rather than the snapshots
+# repo's <latest> keeps us on the real current line and immune to stray/accidental published versions.
+# The version is resolved once, then rewritten into build.gradle for each run only - never committed.
+# --refresh-dependencies makes sure we pull the newest snapshot content, not a cached one.
+#
+# No token, no jnats-side changes, no state: it just runs daily and reports green/red.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"          # once a day at 03:17 UTC - before the European workday, so results are ready by morning
+  workflow_dispatch:               # run on demand from the Actions tab ("Run workflow")
+    inputs:
+      version:
+        description: "jnats version to test (blank = jnats' current main snapshot, e.g. 2.27.0 or 2.27.0-SNAPSHOT)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - name: Resolve the jnats version to test
+        id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}   # passed as data, never interpolated into the script
+        run: |
+          set -euo pipefail
+          VERSION="${INPUT_VERSION:-}"
+          if [ -z "$VERSION" ]; then
+            # default: jnats' current main snapshot = its build.gradle jarVersion + "-SNAPSHOT".
+            # -e + pipefail means a failed fetch aborts here with a clear error, not a bogus "-SNAPSHOT".
+            JARVER=$(curl -sf https://raw.githubusercontent.com/nats-io/nats.java/main/build.gradle \
+                      | grep -oP 'def jarVersion\s*=\s*"\K[^"]+' | head -1)
+            VERSION="${JARVER}-SNAPSHOT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "testing against jnats $VERSION"
+
+  test:
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false             # let every target report; one JDK failing shouldn't cancel the rest
+      matrix:
+        tc: [ 8, 17, 21, 25 ]
+    env:
+      BUILD_EVENT: ${{ github.event_name }}
+      TARGET_COMPATIBILITY: ${{ matrix.tc }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Pin jnats ${{ env.VERSION }} for this run (not committed)
+        run: sed -i "s#io.nats:jnats:[^'\"]*#io.nats:jnats:${VERSION}#" build.gradle
+      - uses: actions/setup-java@v5
+        with:
+          java-version: 25
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: current
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install Nats Server
+        run: |
+          mkdir -p ~/.local/bin
+          cd "$GITHUB_WORKSPACE"
+          git clone https://github.com/nats-io/nats-server.git
+          cd nats-server && go build -o ~/.local/bin/nats-server && nats-server -v
+      - name: Test against jnats ${{ env.VERSION }} (Java ${{ matrix.tc }})
+        run: chmod +x gradlew && ./gradlew --refresh-dependencies clean test

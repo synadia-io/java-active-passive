@@ -1,6 +1,8 @@
 # java-active-passive
 JNATS Active / Passive Connection Extension
 
+[![jnats canary](https://github.com/synadia-io/java-active-passive/actions/workflows/jnats-canary.yml/badge.svg)](https://github.com/synadia-io/java-active-passive/actions/workflows/jnats-canary.yml)
+
 ### Active connection server pool selection
 
 ```
