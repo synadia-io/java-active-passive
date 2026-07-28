@@ -8,6 +8,7 @@ import org.jspecify.annotations.Nullable;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.concurrent.*;
 
 public class ApConnection extends NatsConnection {
@@ -17,7 +18,13 @@ public class ApConnection extends NatsConnection {
     final ApServerPool activeServerPool;
     final ApServerPool passiveServerPool;
 
-    NatsConnection passiveConnection;
+    // volatile: written by the connect/reconnect thread (nulled inside reconnectImplConnect as a
+    // re-entrancy guard, reassigned by newPassive) and read by any thread calling a passive accessor.
+    // volatile gives those readers visibility of the latest reference; each accessor snapshots it once
+    // into a local so a null-check and the following use operate on the SAME reference - lock-free, and
+    // without blocking the time-critical reconnect the way a shared lock around RTT/forceReconnect would.
+    // See issue #20.
+    volatile NatsConnection passiveConnection;
 
     public static ApConnection connect(ApOptions apOptions) throws IOException, InterruptedException {
         if (apOptions == null) {
@@ -96,7 +103,10 @@ public class ApConnection extends NatsConnection {
         }
     }
 
-    private ApConnection(ApOptions apOptions, Options options, ServerPool activeSp, ServerPool passiveSp) {
+    // package-private (not private) so tests can construct an instance without connecting - i.e. with
+    // passiveConnection still null - to exercise the passive accessors' null-safety without spinning
+    // servers. The public entry point remains connect().
+    ApConnection(ApOptions apOptions, Options options, ServerPool activeSp, ServerPool passiveSp) {
         super(options);
         this.apOptions = apOptions;
 
@@ -491,7 +501,8 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public Status getPassiveStatus() {
-        return passiveConnection.getStatus();
+        NatsConnection p = this.passiveConnection;
+        return p == null ? Status.DISCONNECTED : p.getStatus();
     }
 
     /**
@@ -503,7 +514,8 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public Collection<String> getPassiveServers() {
-        return passiveConnection.getServers();
+        NatsConnection p = this.passiveConnection;
+        return p == null ? Collections.emptyList() : p.getServers();
     }
 
     /**
@@ -514,7 +526,8 @@ public class ApConnection extends NatsConnection {
      */
     @NonNull
     public ServerInfo getPassiveServerInfo() {
-        return passiveConnection.getServerInfo();
+        NatsConnection p = this.passiveConnection;
+        return p == null ? ServerInfo.EMPTY_INFO : p.getServerInfo();
     }
 
     /**
@@ -523,7 +536,8 @@ public class ApConnection extends NatsConnection {
      */
     @Nullable
     public String getPassiveConnectedUrl() {
-        return passiveConnection.getConnectedUrl();
+        NatsConnection p = this.passiveConnection;
+        return p == null ? null : p.getConnectedUrl();
     }
 
     /**
@@ -534,7 +548,10 @@ public class ApConnection extends NatsConnection {
      * @throws InterruptedException the connection is not connected
      */
     public void passiveForceReconnect() throws IOException, InterruptedException {
-        passiveConnection.forceReconnect(ForceReconnectOptions.DEFAULT_INSTANCE);
+        NatsConnection p = this.passiveConnection;
+        if (p != null && p.getStatus() == Status.CONNECTED) {
+            p.forceReconnect(ForceReconnectOptions.DEFAULT_INSTANCE);
+        }
     }
 
     /**
@@ -547,16 +564,27 @@ public class ApConnection extends NatsConnection {
      * @throws InterruptedException the connection is not connected
      */
     public void passiveForceReconnect(@Nullable ForceReconnectOptions options) throws IOException, InterruptedException {
-        passiveConnection.forceReconnect(options);
+        NatsConnection p = this.passiveConnection;
+        if (p != null && p.getStatus() == Status.CONNECTED) {
+            p.forceReconnect(options);
+        }
     }
 
     /**
      * Calculates the round trip time between this client and the server for the passive connection.
      * @return the RTT as a duration
      * @throws IOException various IO exception such as timeout or interruption
+     * @throws IllegalStateException if the passive connection is absent or not in a
+     *         {@link Connection.Status#CONNECTED} state - there is no live socket to measure. This mirrors
+     *         {@link #switchToPassive()}, which uses the same exception for the "no usable passive" case.
      */
     @NonNull
     public Duration passiveRTT() throws IOException {
-        return passiveConnection.RTT();
+        NatsConnection p = this.passiveConnection;
+        Status status = p == null ? Status.DISCONNECTED : p.getStatus();
+        if (status != Status.CONNECTED) {
+            throw new IllegalStateException("passive connection status is " + status);
+        }
+        return p.RTT();
     }
 }
