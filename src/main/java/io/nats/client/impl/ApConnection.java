@@ -574,6 +574,9 @@ public class ApConnection extends NatsConnection {
      * Calculates the round trip time between this client and the server for the passive connection.
      * @return the RTT as a duration
      * @throws IOException various IO exception such as timeout or interruption
+     * @throws IllegalStateException if the passive connection is absent or not in a
+     *         {@link Connection.Status#CONNECTED} state - there is no live socket to measure. This mirrors
+     *         {@link #switchToPassive()}, which uses the same exception for the "no usable passive" case.
      */
     @NonNull
     public Duration passiveRTT() throws IOException {
