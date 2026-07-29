@@ -234,13 +234,23 @@ public class ApConnection extends NatsConnection {
         }
 
         if (!passiveConnection.isConnected()) {
-            // The passive is also down (e.g. the whole cluster is restarting), so there's no live
-            // socket to promote. Drop it and let the base logic reconnect the active through the
-            // server pool. Once the active is back, RE-ARM the passive: a warm standby must ALWAYS
-            // be re-established, or the first full-cluster outage would permanently leave us with no
-            // passive. Best-effort (reArmPassive) so a passive that can't connect yet never aborts
-            // the active's reconnect; the next active reconnect will try again.
+            // The passive is also down (e.g. the whole cluster is restarting), so there's no live socket to
+            // promote. CLOSE it - don't just drop the reference - before letting the active reconnect. The
+            // passive is its own NatsConnection with maxReconnects(-1), so its independent reconnect thread
+            // would otherwise (a) compete with the active's reconnect, both hammering the recovering brokers,
+            // and (b) leak: newPassive() below re-arms from a now-null field, so nothing would ever close this
+            // dead passive - its thread would run forever and reconnect as a phantom on recovery.
+            // Null the field FIRST so a re-entrant reconnectImplConnect (the passiveConnection == null guard
+            // above) short-circuits if handleCommunicationIssue fires again during the close.
+            // Executor-safe here, unlike the socket-steal path below: no adopted reader runs on the passive's
+            // executor, and Options rebuilds shut-down internal executors on next use, so the re-armed passive
+            // still gets a working pool.
+            // Once the active is back, RE-ARM the passive: a warm standby must ALWAYS be re-established, or the
+            // first full-cluster outage would permanently leave us with no passive. Best-effort (reArmPassive)
+            // so a passive that can't connect yet never aborts the active's reconnect; the next reconnect retries.
+            NatsConnection deadPassive = passiveConnection;
             passiveConnection = null;
+            deadPassive.close();
             super.reconnectImplConnect();
             if (isConnected()) {
                 activeConnectSucceeded();

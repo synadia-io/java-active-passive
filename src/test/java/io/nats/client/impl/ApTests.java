@@ -8,11 +8,13 @@ import io.nats.client.ForceReconnectOptions;
 import io.nats.client.Options;
 import io.nats.client.support.Listener;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
 import java.util.logging.Level;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -365,6 +367,59 @@ public class ApTests {
                     }
                 }
             }
+        }
+    }
+
+    private static boolean waitFor(BooleanSupplier cond, long millis) throws InterruptedException {
+        long end = System.currentTimeMillis() + millis;
+        while (System.currentTimeMillis() < end) {
+            if (cond.getAsBoolean()) {
+                return true;
+            }
+            Thread.sleep(25);
+        }
+        return cond.getAsBoolean();
+    }
+
+    // Issue #24: when the passive is down at reconnect time (whole-cluster path), reconnectImplConnect must
+    // CLOSE the dead passive, not just drop the reference - otherwise its maxReconnects(-1) reconnect thread
+    // runs on as an orphan (competing load + a leak that reconnects as a phantom on recovery). The close
+    // happens BEFORE the active's own reconnect loop, so we can observe it while the cluster is still down.
+    @Test
+    @Timeout(90)
+    public void testWholeClusterReconnectClosesDeadPassive() throws Exception {
+        NatsServerRunner server1 = new NatsServerRunner();
+        NatsServerRunner server2 = new NatsServerRunner();
+        try {
+            // active = server1, passive = server2 (distinct), no randomize so it's deterministic
+            Options.Builder builder = new Options.Builder(getOptions(server1, server2)).noRandomize();
+            OptionsHelper helper = new OptionsHelper(builder);
+            try (ApConnection apc = ApConnection.connect(helper.apOptions)) {
+                helper.validateConnected();
+                NatsConnection deadPassive = apc.passiveConnection;
+                assertNotNull(deadPassive);
+                assertEquals(Connection.Status.CONNECTED, deadPassive.getStatus());
+                assertNotEquals(apc.getServerInfo().getServerId(), deadPassive.getServerInfo().getServerId());
+
+                // 1) take the passive's server down; with only server1 (the active, which the pool skips) left,
+                //    the passive has nowhere distinct to reconnect and stays not-connected.
+                server2.close();
+                assertTrue(waitFor(() -> !deadPassive.isConnected(), 15000),
+                    "passive should drop when its server is gone");
+
+                // 2) take the active's server down too (whole cluster now down). The active's own reconnect
+                //    runs on a background thread and hits the whole-cluster branch with a non-connected passive.
+                server1.close();
+
+                // THE FIX: the whole-cluster branch CLOSES the dead passive (before it even starts looping to
+                //    reconnect the active), rather than orphaning its reconnect thread.
+                assertTrue(waitFor(() -> deadPassive.getStatus() == Connection.Status.CLOSED, 20000),
+                    "the dead passive must be CLOSED after the whole-cluster reconnect, not left running");
+            }
+        }
+        finally {
+            try { server1.close(); } catch (Exception ignore) { }
+            try { server2.close(); } catch (Exception ignore) { }
         }
     }
 }
