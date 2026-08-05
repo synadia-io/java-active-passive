@@ -4,6 +4,7 @@ gnatsd.log
 .claude/**
 **/Debug*.java
 *.csv
+*.rar
 
 # Compiled source #
 ###################
