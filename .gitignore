@@ -5,6 +5,8 @@ gnatsd.log
 **/Debug*.java
 *.csv
 *.rar
+.editorconfig
+
 
 # Compiled source #
 ###################
